@@ -87,5 +87,5 @@ async function poll() {
   }
 }
 
-setInterval(poll, 4000);
+setInterval(poll, 10000);
 console.log("🚀 Zora Discord bot running...");
