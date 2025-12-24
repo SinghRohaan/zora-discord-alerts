@@ -1,0 +1,11 @@
+{
+  "name": "zora-discord-alerts",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
