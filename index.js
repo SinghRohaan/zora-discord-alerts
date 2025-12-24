@@ -1,8 +1,21 @@
 import axios from "axios";
 import fs from "fs";
 
-const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK;
+/* =======================
+   ENV + SAFETY CHECK
+======================= */
+
+const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK?.trim();
+if (!DISCORD_WEBHOOK) {
+  console.error("❌ DISCORD_WEBHOOK is missing");
+  process.exit(1);
+}
+
 const ZORA_API = "https://api.zora.co/universal/graphql";
+
+/* =======================
+   HEADERS (browser-like)
+======================= */
 
 const HEADERS = {
   "x-zora-new-infra": "true",
@@ -13,15 +26,24 @@ const HEADERS = {
   "user-agent": "Mozilla/5.0"
 };
 
+/* =======================
+   GRAPHQL QUERY
+   (reduced load)
+======================= */
+
 const QUERY_BODY = {
   hash: "f44d9b633ced78a5000cccf02cb973b4",
   variables: {
     listType: "NEW_CREATORS",
-    first: 20,
+    first: 5,        // 🔑 reduce load
     after: null
   },
   operationName: "NewCreatorsQuery"
 };
+
+/* =======================
+   SEEN CACHE
+======================= */
 
 let seen = new Set();
 
@@ -29,14 +51,23 @@ if (fs.existsSync("seen.json")) {
   seen = new Set(JSON.parse(fs.readFileSync("seen.json")));
 }
 
+/* =======================
+   FETCH ZORA
+======================= */
+
 async function fetchNewCreators() {
   const res = await axios.post(
     ZORA_API,
     QUERY_BODY,
     { headers: HEADERS }
   );
+
   return res.data.data.exploreList.edges;
 }
+
+/* =======================
+   DISCORD EMBED
+======================= */
 
 async function sendToDiscord(node) {
   const embed = {
@@ -45,10 +76,12 @@ async function sendToDiscord(node) {
       {
         title: `🚀 New Zora Creator Token: ${node.title}`,
         color: 0x5865f2,
+
         author: {
           name: `Creator: ${node.creatorProfile.displayName} (@${node.creatorProfile.handle})`,
           icon_url: node.creatorProfile.avatar?.downloadableUri
         },
+
         fields: [
           {
             name: "Address",
@@ -58,13 +91,22 @@ async function sendToDiscord(node) {
           { name: "Chain ID", value: `${node.chainId}`, inline: true },
           { name: "Total Supply", value: `${node.totalSupply}`, inline: true },
           { name: "Unique Holders", value: `${node.uniqueHolders}`, inline: true },
-          { name: "Market Cap", value: `$${Number(node.marketCap).toFixed(2)}`, inline: true },
+          {
+            name: "Market Cap",
+            value: node.marketCap ? `$${Number(node.marketCap).toFixed(2)}` : "—",
+            inline: true
+          },
           { name: "Created At", value: node.createdAt, inline: true }
         ],
+
         image: {
           url: node.mediaContent?.previewImage?.downloadableUri
         },
-        footer: { text: "Zora • Base" },
+
+        footer: {
+          text: "Zora • Base"
+        },
+
         timestamp: new Date().toISOString()
       }
     ]
@@ -73,19 +115,36 @@ async function sendToDiscord(node) {
   await axios.post(DISCORD_WEBHOOK, embed);
 }
 
+/* =======================
+   POLL LOOP (SAFE)
+======================= */
+
 async function poll() {
   try {
     const edges = await fetchNewCreators();
+
     for (const { node } of edges) {
       if (seen.has(node.address)) continue;
+
       seen.add(node.address);
       fs.writeFileSync("seen.json", JSON.stringify([...seen]));
+
       await sendToDiscord(node);
     }
   } catch (e) {
-    console.error("Error:", e.message);
+    if (e.response?.status === 429) {
+      console.log("⚠️ Rate limited by Zora — backing off safely");
+      return; // DO NOT CRASH
+    }
+    console.error("❌ Error:", e.message);
   }
 }
 
-setInterval(poll, 10000);
-console.log("🚀 Zora Discord bot running...");
+/* =======================
+   START
+======================= */
+
+// 🔑 15 seconds = safe + still early
+setInterval(poll, 15000);
+
+console.log("🚀 Zora Discord bot running (safe mode)...");
